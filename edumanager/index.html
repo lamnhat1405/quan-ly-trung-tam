@@ -1,0 +1,141 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EduManager · Quản lý trung tâm</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+:root{--g:#0b8043;--bg:#e8f0eb;--t:#1c2b22;--m:#6b7a70}*{box-sizing:border-box}
+body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--t)}
+#app{display:flex;min-height:100vh}nav{width:220px;background:#fff;padding:14px;position:sticky;top:0;height:100vh;overflow:auto}
+nav h2{font-size:15px;margin:0 0 12px;color:var(--g)}nav a{display:block;padding:8px 10px;border-radius:8px;color:var(--t);text-decoration:none;cursor:pointer}
+nav a.on{background:#d9eadf;color:var(--g);font-weight:600}main{flex:1;padding:20px;min-width:0}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:14px;overflow:auto}.row{display:flex;gap:12px;flex-wrap:wrap}
+.k{flex:1;min-width:150px;background:#fff;border-radius:14px;padding:14px}.k b{display:block;font-size:24px;color:var(--g)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #eef2ef;white-space:nowrap}th{color:var(--m);font-size:12px}
+input,select,textarea{width:100%;padding:8px;border:1px solid #d5ddd8;border-radius:8px;font:inherit}label{display:block;margin:8px 0;font-weight:600;font-size:12px;color:var(--m)}
+.b1,.b2,.b3{border:0;border-radius:20px;padding:7px 14px;cursor:pointer;font:inherit}.b1{background:var(--g);color:#fff}.b2{background:#eef2ef}.b3{background:#fde8e8;color:#b42318}
+.ov{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:9}.md{background:#fff;border-radius:14px;padding:18px;width:min(520px,94vw);max-height:90vh;overflow:auto}
+.ft{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.bar{height:10px;background:var(--g);border-radius:5px}
+.tag{padding:2px 8px;border-radius:10px;background:#eef2ef;font-size:12px}.red{color:#b42318}.top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+#login{max-width:340px;margin:12vh auto}#toast{position:fixed;bottom:16px;right:16px;background:#1c2b22;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:99}
+@media(max-width:700px){nav{width:100%;height:auto;position:static}#app{flex-direction:column}}
+</style></head><body><div id="root"></div><div id="toast"></div>
+<script>
+// ====== CẤU HÌNH: điền URL và anon key của dự án Supabase ======
+const SB_URL='https://YOUR-PROJECT.supabase.co',SB_KEY='YOUR_ANON_KEY',HOURS_PER_SESSION=1.5;
+const sb=supabase.createClient(SB_URL,SB_KEY);
+const $=s=>document.querySelector(s),fm=n=>(+n||0).toLocaleString('vi-VN')+'đ',d=s=>s?new Date(s).toLocaleDateString('vi-VN'):'';
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const today=()=>new Date().toISOString().slice(0,10),ym=()=>today().slice(0,7);
+const TB=['leads','tests','courses','rooms','teachers','classes','students','invoices','payments','attendance','payroll','profiles'];
+const REF={course_id:'courses',teacher_id:'teachers',room_id:'rooms',class_id:'classes',student_id:'students'};
+const LBL={admin:'Quản trị',quanly:'Quản lý',sale:'Tư vấn tuyển sinh',giaovu:'Giáo vụ',ketoan:'Kế toán',giaovien:'Giáo viên'};
+let me,R,cfg={},C={},cur='dash';
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3000)}
+function modal(title,body,ok,txt='Lưu'){const m=document.createElement('div');m.className='ov';
+m.innerHTML=`<div class="md"><h3>${title}</h3>${body}<div class="ft"><button class="b2" id="mc">Đóng</button>${ok?`<button class="b1" id="mo">${txt}</button>`:''}</div></div>`;
+document.body.append(m);m.querySelector('#mc').onclick=()=>m.remove();
+if(ok)m.querySelector('#mo').onclick=async()=>{try{if(await ok(m)!==false){m.remove();await load();go()}}catch(e){toast(e.message)}};return m}
+function fld(f,v){const id='f_'+f.k;let i;
+if(f.t=='sel')i=`<select id="${id}">${f.o.map(x=>`<option ${x==v?'selected':''}>${x}</option>`).join('')}</select>`;
+else if(f.t=='ref')i=`<select id="${id}"><option value="">—</option>${(C[f.o]||[]).map(r=>`<option value="${r.id}" ${r.id==v?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+else if(f.t=='area')i=`<textarea id="${id}">${esc(v)}</textarea>`;
+else i=`<input id="${id}" type="${f.t||'text'}" value="${esc(v)}">`;return`<label>${f.l}${i}</label>`}
+const rd=(fs,m)=>Object.fromEntries(fs.map(f=>{let v=m.querySelector('#f_'+f.k).value;return[f.k,v===''?null:f.t=='number'||f.t=='ref'?+v:v]}));
+const SRC=['Facebook','TikTok','Giới thiệu','Trực tiếp','Google','Khác'];
+// ====== Danh mục thực thể (cột, trường nhập, quyền sửa) ======
+const E={
+leads:{n:'Khách tiềm năng',w:['admin','sale'],c:[['name','Khách'],['phone','SĐT'],['source','Nguồn'],['status','Trạng thái'],['created_at','Ngày tạo',d]],
+ f:[{k:'name',l:'Họ tên *'},{k:'phone',l:'Số điện thoại *'},{k:'email',l:'Email'},{k:'source',l:'Nguồn khách',t:'sel',o:SRC},{k:'status',l:'Trạng thái',t:'sel',o:['Mới','Đã hẹn test','Đã báo giá','Chốt hợp đồng','Không nhu cầu']},{k:'note',l:'Ghi chú tư vấn',t:'area'}],x:[['Chốt đơn',l=>chot(l)]]},
+tests:{n:'Lịch test đầu vào',w:['admin','sale','giaovien'],c:[['date','Ngày',d],['name','Khách'],['phone','SĐT'],['teacher_id','Giáo viên'],['status','Trạng thái'],['result','Kết quả']],
+ f:[{k:'name',l:'Khách *'},{k:'phone',l:'SĐT'},{k:'date',l:'Ngày test',t:'date'},{k:'teacher_id',l:'Giáo viên chấm',t:'ref',o:'teachers'},{k:'status',l:'Trạng thái',t:'sel',o:['Đã hẹn','Đã test','Vắng mặt','Hủy']},{k:'result',l:'Kết quả/nhận xét',t:'area'}]},
+students:{n:'Học viên',w:['admin','sale','giaovu'],c:[['name','Học viên'],['phone','SĐT'],['class_id','Lớp'],['status','Trạng thái'],['debt','Công nợ',(v,r)=>fm(debt(r.id))]],
+ f:[{k:'name',l:'Họ tên *'},{k:'phone',l:'SĐT'},{k:'email',l:'Email'},{k:'dob',l:'Ngày sinh',t:'date'},{k:'address',l:'Địa chỉ'},{k:'class_id',l:'Lớp',t:'ref',o:'classes'},{k:'status',l:'Trạng thái',t:'sel',o:['Đang học','Chờ xếp lớp','Bảo lưu','Nghỉ học']},{k:'note',l:'Ghi chú',t:'area'}],x:[['Phiếu',s=>phieu(s)]]},
+classes:{n:'Lớp học & điểm danh',w:['admin','giaovu'],c:[['name','Lớp'],['course_id','Khóa'],['teacher_id','Giáo viên'],['room_id','Phòng'],['schedule','Lịch'],['hv','Sĩ số',(v,r)=>C.students.filter(s=>s.class_id==r.id&&s.status=='Đang học').length+'/'+r.max_students],['status','Trạng thái']],
+ f:[{k:'name',l:'Tên lớp *'},{k:'course_id',l:'Khóa học',t:'ref',o:'courses'},{k:'teacher_id',l:'Giáo viên',t:'ref',o:'teachers'},{k:'room_id',l:'Phòng',t:'ref',o:'rooms'},{k:'start_date',l:'Khai giảng',t:'date'},{k:'total_sessions',l:'Tổng số buổi',t:'number'},{k:'max_students',l:'Sĩ số tối đa',t:'number'},{k:'schedule',l:'Lịch học (VD: Thứ 5 19:30-21:30)'},{k:'status',l:'Trạng thái',t:'sel',o:['Sắp khai giảng','Đang hoạt động','Đã kết thúc']}],x:[['Điểm danh',c=>diem(c)]],chk:clash},
+courses:{n:'Khóa học & học phí',w:['admin'],c:[['name','Khóa'],['fee_month','Học phí/tháng',fm],['sessions','Số buổi'],['teacher_rate','Lương GV/giờ',fm]],
+ f:[{k:'name',l:'Tên khóa *'},{k:'fee_month',l:'Học phí/tháng',t:'number'},{k:'sessions',l:'Thời lượng (buổi)',t:'number'},{k:'teacher_rate',l:'Lương GV mỗi giờ (Admin)',t:'number'},{k:'descr',l:'Mô tả',t:'area'}]},
+rooms:{n:'Phòng học',w:['admin','giaovu'],c:[['name','Phòng'],['floor','Tầng'],['capacity','Sức chứa'],['status','Trạng thái']],
+ f:[{k:'name',l:'Tên phòng *'},{k:'floor',l:'Cơ sở/Tầng'},{k:'capacity',l:'Sức chứa',t:'number'},{k:'status',l:'Trạng thái',t:'sel',o:['Sẵn sàng','Đang sửa chữa','Không hoạt động']}]},
+teachers:{n:'Giáo viên',w:['admin'],c:[['name','Giáo viên'],['email','Email'],['subject','Chuyên môn'],['contract','Hợp đồng'],['rate','Lương/giờ',fm],['base_salary','Lương cứng',fm],['status','Trạng thái']],
+ f:[{k:'name',l:'Họ tên *'},{k:'email',l:'Email (trùng email đăng nhập)'},{k:'phone',l:'SĐT'},{k:'subject',l:'Chuyên môn'},{k:'contract',l:'Loại hợp đồng',t:'sel',o:['Full-time','Part-time','Thỉnh giảng']},{k:'rate',l:'Lương/giờ',t:'number'},{k:'base_salary',l:'Lương cứng/tháng',t:'number'},{k:'status',l:'Trạng thái',t:'sel',o:['Hoạt động','Tạm nghỉ','Đã nghỉ']}]},
+invoices:{n:'Học phí & công nợ',w:['admin','ketoan','sale'],c:[['due_date','Hạn',d],['student_id','Học viên'],['title','Nội dung'],['amount','Phải đóng',fm],['paid','Đã đóng',fm],['st','Tình trạng',(v,r)=>st(r)]],
+ f:[{k:'student_id',l:'Học viên',t:'ref',o:'students'},{k:'title',l:'Nội dung'},{k:'amount',l:'Số tiền',t:'number'},{k:'due_date',l:'Hạn đóng',t:'date'}],x:[['Thu tiền',i=>thu(i),['admin','ketoan']]]}};
+const st=r=>r.paid>=r.amount?'Đã đóng':r.due_date<today()?'Quá hạn':'Chưa đóng';
+const debt=id=>C.invoices.filter(i=>i.student_id==id).reduce((a,i)=>a+i.amount-i.paid,0);
+const NAV=[['dash','Tổng quan','*'],['leads','Khách tiềm năng','admin sale giaovu ketoan'],['tests','Lịch test đầu vào','admin sale giaovu giaovien'],['students','Học viên','admin sale giaovu ketoan giaovien'],['classes','Lớp & điểm danh','*'],['courses','Khóa học & học phí','admin sale giaovu ketoan'],['rooms','Phòng học','admin giaovu'],['invoices','Học phí & công nợ','admin ketoan sale giaovu'],['payments','Lịch sử giao dịch','admin ketoan'],['teachers','Giáo viên','admin giaovu ketoan'],['payroll','Bảng lương','admin ketoan'],['report','Báo cáo','admin ketoan'],['users','Người dùng & quyền','admin'],['settings','Cài đặt','admin']];
+const can=a=>a=='*'||a.split(' ').includes(R);
+// ====== Khởi động & đăng nhập ======
+async function load(){const s=await Promise.all(TB.map(t=>sb.from(t).select('*').order('id')));TB.forEach((t,i)=>C[t]=s[i].data||[]);
+const c=await sb.from('settings').select('*').eq('id',1).single();cfg=c.data||{}}
+async function boot(){const{data:{session}}=await sb.auth.getSession();if(!session)return loginUI();
+me=(await sb.from('profiles').select('*').eq('id',session.user.id).single()).data;if(!me)return loginUI('Tài khoản chưa có hồ sơ');R=me.role=='quanly'?'admin':me.role;await load();shell()}
+function loginUI(err=''){$('#root').innerHTML=`<div class="card" id="login"><h2>EduManager</h2><p class="red">${err}</p>${fld({k:'em',l:'Email'},'')}${fld({k:'pw',l:'Mật khẩu',t:'password'},'')}<button class="b1" id="go" style="width:100%">Đăng nhập</button></div>`;
+$('#go').onclick=async()=>{const{error}=await sb.auth.signInWithPassword({email:$('#f_em').value,password:$('#f_pw').value});error?toast('Sai email hoặc mật khẩu'):boot()}}
+function shell(){$('#root').innerHTML=`<div id="app"><nav><h2>${esc(cfg.center_name)}</h2><small>${esc(me.full_name)} · ${LBL[me.role]}</small><br><br>${NAV.filter(n=>can(n[2])).map(n=>`<a data-p="${n[0]}">${n[1]}</a>`).join('')}<a id="lo" style="color:#b42318">Đăng xuất</a></nav><main id="mn"></main></div>`;
+document.querySelectorAll('nav a[data-p]').forEach(a=>a.onclick=()=>{cur=a.dataset.p;go()});$('#lo').onclick=async()=>{await sb.auth.signOut();boot()};go()}
+async function go(){document.querySelectorAll('nav a[data-p]').forEach(a=>a.classList.toggle('on',a.dataset.p==cur));const m=$('#mn');
+if(E[cur])list(cur);else m.innerHTML='';({dash,payments:pay,payroll:payr,report:rep,users,settings:sett})[cur]?.()}
+// ====== Danh sách CRUD chung ======
+function list(k){const e=E[k],w=e.w.includes(R);$('#mn').innerHTML=`<div class="top"><h2>${e.n}</h2><span><input id="q" placeholder="Tìm kiếm..." style="width:220px">${k=='invoices'&&w?' <button class="b2" id="mk">Tạo học phí tháng</button>':''}${w?' <button class="b1" id="ad">+ Thêm</button>':''}</span></div><div class="card"><table><tr>${e.c.map(c=>`<th>${c[1]}</th>`).join('')}<th></th></tr><tbody id="tb"></tbody></table></div>`;
+const draw=()=>{const q=$('#q').value.toLowerCase();$('#tb').innerHTML=C[k].filter(r=>!q||JSON.stringify(Object.values(r)).toLowerCase().includes(q)||e.c.some(c=>REF[c[0]]&&String(nm(c[0],r[c[0]])).toLowerCase().includes(q))).map(r=>`<tr>${e.c.map(c=>`<td>${esc(c[2]?c[2](r[c[0]],r):REF[c[0]]?nm(c[0],r[c[0]]):r[c[0]])}</td>`).join('')}<td>${(e.x||[]).filter(x=>!x[2]||x[2].includes(R)).map((x,i)=>`<button class="b2" data-x="${r.id}:${e.x.indexOf(x)}">${x[0]}</button>`).join(' ')}${w?` <button class="b2" data-e="${r.id}">Sửa</button> <button class="b3" data-d="${r.id}">Xóa</button>`:''}</td></tr>`).join('')||`<tr><td colspan="9">Chưa có dữ liệu</td></tr>`;
+document.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>form(k,C[k].find(r=>r.id==b.dataset.e)));
+document.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{if(!confirm('Xóa bản ghi này?'))return;const{error}=await sb.from(k).delete().eq('id',b.dataset.d);error?toast(error.message):(await load(),list(k))});
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{const[i,j]=b.dataset.x.split(':');e.x[j][1](C[k].find(r=>r.id==i))})};
+$('#q').oninput=draw;draw();if(w)$('#ad').onclick=()=>form(k,{});if($('#mk'))$('#mk').onclick=taoThang}
+const nm=(f,id)=>(C[REF[f]].find(r=>r.id==id)||{}).name||'';
+function form(k,r){const e=E[k];modal((r.id?'Sửa ':'Thêm ')+e.n,e.f.map(f=>fld(f,r[f.k])).join(''),async m=>{const v=rd(e.f,m);if(e.chk&&!e.chk(v,r.id))return false;
+const{error}=r.id?await sb.from(k).update(v).eq('id',r.id):await sb.from(k).insert(v);if(error)throw error})}
+function clash(v,id){const o=C.classes.find(c=>c.id!=id&&c.schedule&&c.schedule==v.schedule&&(c.room_id==v.room_id&&v.room_id||c.teacher_id==v.teacher_id&&v.teacher_id));
+if(o){toast('Trùng phòng/giáo viên cùng giờ với lớp '+o.name);return false}return true}
+// ====== Nghiệp vụ ======
+function chot(l){const fs=[{k:'class_id',l:'Xếp vào lớp',t:'ref',o:'classes'}];modal('Chốt đơn: '+l.name,fld(fs[0],''),async m=>{const cid=rd(fs,m).class_id;if(!cid)throw Error('Chọn lớp');
+const cl=C.classes.find(c=>c.id==cid),co=C.courses.find(c=>c.id==cl.course_id);
+const{data:s,error}=await sb.from('students').insert({name:l.name,phone:l.phone,email:l.email,class_id:cid,lead_id:l.id,status:'Đang học'}).select().single();if(error)throw error;
+await sb.from('invoices').insert({student_id:s.id,title:'Học phí tháng '+ym().split('-').reverse().join('/'),amount:co?.fee_month||0,due_date:today()});
+await sb.from('leads').update({status:'Chốt hợp đồng'}).eq('id',l.id);toast('Đã tạo học viên và khoản học phí')},'Hoàn tất đăng ký')}
+async function taoThang(){const t='Học phí tháng '+ym().split('-').reverse().join('/'),due=ym()+'-'+String(cfg.due_day||5).padStart(2,'0');let n=0;
+for(const s of C.students.filter(s=>s.status=='Đang học'&&s.class_id)){if(C.invoices.some(i=>i.student_id==s.id&&i.title==t))continue;
+const co=C.courses.find(c=>c.id==C.classes.find(c=>c.id==s.class_id)?.course_id);if(!co)continue;await sb.from('invoices').insert({student_id:s.id,title:t,amount:co.fee_month,due_date:due});n++}
+await load();toast(`Đã tạo ${n} khoản học phí`);list('invoices')}
+function thu(i){const s=C.students.find(x=>x.id==i.student_id),rest=i.amount-i.paid;
+const m=modal('Phiếu thu tiền',`<p><b>${esc(s?.name)}</b> · ${esc(i.title)}<br>Còn nợ: ${fm(rest)}</p>${fld({k:'amt',l:'Số tiền thực thu',t:'number'},rest)}${fld({k:'mt',l:'Phương thức',t:'sel',o:['Chuyển khoản','Tiền mặt','Quẹt thẻ (POS)']},'')}<div id="qr"></div>${fld({k:'nt',l:'Ghi chú'},'Thu: '+i.title)}`,async m=>{
+const a=+m.querySelector('#f_amt').value;if(!(a>0))throw Error('Số tiền không hợp lệ');
+const p={invoice_id:i.id,student_id:i.student_id,amount:a,method:m.querySelector('#f_mt').value,note:m.querySelector('#f_nt').value,created_by:me.full_name};
+const r=await sb.from('payments').insert(p).select().single();if(r.error)throw r.error;await sb.from('invoices').update({paid:i.paid+a}).eq('id',i.id);
+if(confirm('Đã thu '+fm(a)+'. In phiếu thu?'))print(`<h2>${esc(cfg.center_name)}</h2><h3>PHIẾU THU #${r.data.id}</h3><p>Học viên: ${esc(s?.name)}</p><p>Nội dung: ${esc(p.note)}</p><p>Số tiền: <b>${fm(a)}</b> (${p.method})</p><p>Ngày: ${new Date().toLocaleString('vi-VN')} · Người thu: ${esc(me.full_name)}</p>`)},'Xác nhận thu');
+const q=()=>{const a=m.querySelector('#f_amt').value,b=m.querySelector('#f_mt').value;m.querySelector('#qr').innerHTML=b=='Chuyển khoản'&&cfg.bank_code&&cfg.account_no?`<img style="width:200px" src="https://img.vietqr.io/image/${cfg.bank_code}-${cfg.account_no}-compact.png?amount=${a}&addInfo=${encodeURIComponent(m.querySelector('#f_nt').value)}&accountName=${encodeURIComponent(cfg.account_name||'')}"><br><small>Khách quét mã để chuyển khoản</small>`:''};
+m.querySelectorAll('input,select').forEach(x=>x.oninput=q);q()}
+function print(h){const w=open('','_blank');w.document.write(`<body style="font-family:sans-serif;padding:24px">${h}</body>`);w.document.close();w.print()}
+function phieu(s){const iv=C.invoices.filter(i=>i.student_id==s.id);print(`<h2>${esc(cfg.center_name)}</h2><h3>Phiếu tổng hợp học tập & tài chính</h3><p>Học viên: <b>${esc(s.name)}</b> · ${esc(s.phone)}</p><p>Lớp: ${esc(nm('class_id',s.class_id))}</p><table border=1 cellpadding=6 style="border-collapse:collapse"><tr><th>Khoản</th><th>Phải nộp</th><th>Đã nộp</th><th>Còn nợ</th></tr>${iv.map(i=>`<tr><td>${esc(i.title)}</td><td>${fm(i.amount)}</td><td>${fm(i.paid)}</td><td>${fm(i.amount-i.paid)}</td></tr>`).join('')}</table><p>Điểm danh: ${C.attendance.filter(a=>a.student_id==s.id&&a.status=='Có mặt').length}/${C.attendance.filter(a=>a.student_id==s.id).length} buổi có mặt</p>`)}
+function diem(c){const ss=C.students.filter(s=>s.class_id==c.id&&s.status=='Đang học'),S=['Có mặt','Vắng','Muộn','Có phép'];
+const m=modal('Điểm danh · '+esc(c.name),`${fld({k:'dt',l:'Ngày học',t:'date'},today())}${ss.map(s=>`<label>${esc(s.name)}<select data-s="${s.id}">${S.map(x=>`<option>${x}</option>`).join('')}</select></label>`).join('')||'<p>Lớp chưa có học viên</p>'}`,async m=>{
+const dt=m.querySelector('#f_dt').value;const rows=[...m.querySelectorAll('[data-s]')].map(x=>({class_id:c.id,student_id:+x.dataset.s,date:dt,status:x.value}));
+const{error}=await sb.from('attendance').upsert(rows,{onConflict:'class_id,student_id,date'});if(error)throw error;toast('Đã lưu điểm danh')});
+const fill=()=>{const dt=m.querySelector('#f_dt').value;m.querySelectorAll('[data-s]').forEach(x=>{const a=C.attendance.find(a=>a.class_id==c.id&&a.student_id==x.dataset.s&&a.date==dt);x.value=a?a.status:'Có mặt'})};m.querySelector('#f_dt').onchange=fill;fill()}
+// ====== Trang đặc biệt ======
+function dash(){const mo=ym(),ls=C.leads.filter(l=>(l.created_at||'').startsWith(mo)).length,rev=C.payments.filter(p=>p.created_at.startsWith(mo)).reduce((a,p)=>a+p.amount,0),
+dn=C.invoices.reduce((a,i)=>a+i.amount-i.paid,0),qh=C.invoices.filter(i=>st(i)=='Quá hạn').length,hv=C.students.filter(s=>s.status=='Đang học').length,cho=C.students.filter(s=>s.status=='Chờ xếp lớp'||!s.class_id).length;
+const dow=['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][new Date().getDay()],hn=C.classes.filter(c=>c.status=='Đang hoạt động'&&(c.schedule||'').includes(dow.replace('Thứ ','Thứ ').replace('Chủ nhật','Chủ nhật')));
+const todo=[[cho,'học viên chờ xếp lớp'],[qh,'khoản học phí quá hạn'],[C.leads.filter(l=>l.status=='Mới').length,'khách mới chưa chăm sóc'],[C.tests.filter(t=>t.date==today()&&t.status=='Đã hẹn').length,'lịch test hôm nay']];
+$('#mn').innerHTML=`<h2>Chào ${esc(me.full_name)} · ${d(today())}</h2><div class="row">${[['Khách mới tháng này',ls],['Đã thu tháng này',fm(rev)],['Công nợ cần thu',fm(dn)],['Đang học',hv]].filter((_,i)=>can(i==0?'admin sale':i<3?'admin ketoan':'*')).map(k=>`<div class="k">${k[0]}<b>${k[1]}</b></div>`).join('')}</div><br><div class="row"><div class="card" style="flex:1"><h3>Việc cần làm</h3>${todo.filter(t=>t[0]).map(t=>`<p><b>${t[0]}</b> ${t[1]}</p>`).join('')||'<p>Không có việc tồn đọng</p>'}</div><div class="card" style="flex:1"><h3>Lịch dạy hôm nay (${dow})</h3>${hn.map(c=>`<p><b>${esc(c.name)}</b><br>${esc(c.schedule)} · ${esc(nm('room_id',c.room_id))}</p>`).join('')||'<p>Không có lớp</p>'}</div></div>`}
+function pay(){$('#mn').innerHTML=`<div class="top"><h2>Lịch sử giao dịch</h2></div><div class="card"><table><tr><th>Ngày</th><th>Học viên</th><th>Số tiền</th><th>Phương thức</th><th>Ghi chú</th><th>Người thu</th><th></th></tr>${[...C.payments].reverse().map(p=>`<tr><td>${new Date(p.created_at).toLocaleString('vi-VN')}</td><td>${esc(nm('student_id',p.student_id))}</td><td>${fm(p.amount)}</td><td>${p.method}</td><td>${esc(p.note)}</td><td>${esc(p.created_by)}</td><td><button class="b3" data-r="${p.id}">Hoàn tiền</button></td></tr>`).join('')}</table></div>`;
+document.querySelectorAll('[data-r]').forEach(b=>b.onclick=async()=>{const p=C.payments.find(x=>x.id==b.dataset.r);if(!confirm('Hoàn giao dịch này?'))return;const i=C.invoices.find(x=>x.id==p.invoice_id);
+if(i)await sb.from('invoices').update({paid:Math.max(0,i.paid-p.amount)}).eq('id',i.id);await sb.from('payments').delete().eq('id',p.id);await load();pay()})}
+function payr(m=ym()){const ts=C.teachers.filter(t=>t.status=='Hoạt động');
+$('#mn').innerHTML=`<div class="top"><h2>Bảng lương giáo viên</h2><input type="month" id="mo" value="${m}" style="width:160px"></div><div class="card"><table><tr><th>Giáo viên</th><th>Buổi</th><th>Giờ</th><th>Lương dạy</th><th>Lương cứng</th><th>Thưởng</th><th>Khấu trừ</th><th>Thực lĩnh</th></tr>${ts.map(t=>{
+const cl=C.classes.filter(c=>c.teacher_id==t.id),ss=new Set(C.attendance.filter(a=>a.date.startsWith(m)&&cl.some(c=>c.id==a.class_id)).map(a=>a.class_id+a.date)).size,h=ss*HOURS_PER_SESSION;
+const rate=cl.length&&C.courses.find(c=>c.id==cl[0].course_id)?.teacher_rate&&!t.rate?C.courses.find(c=>c.id==cl[0].course_id).teacher_rate:t.rate,pr=C.payroll.find(p=>p.teacher_id==t.id&&p.month==m)||{bonus:0,deduction:0},dy=h*rate;
+return`<tr><td>${esc(t.name)}</td><td>${ss}</td><td>${h}</td><td>${fm(dy)}</td><td>${fm(t.base_salary)}</td><td><input type="number" data-b="${t.id}" value="${pr.bonus}" style="width:100px"></td><td><input type="number" data-k="${t.id}" value="${pr.deduction}" style="width:100px"></td><td><b>${fm(dy+t.base_salary+ +pr.bonus-pr.deduction)}</b></td></tr>`}).join('')}</table><small>Giờ dạy = số buổi đã điểm danh × ${HOURS_PER_SESSION}h</small></div>`;
+$('#mo').onchange=e=>payr(e.target.value);document.querySelectorAll('[data-b],[data-k]').forEach(x=>x.onchange=async()=>{const id=x.dataset.b||x.dataset.k;
+const row={teacher_id:+id,month:m,bonus:+$(`[data-b="${id}"]`).value,deduction:+$(`[data-k="${id}"]`).value};const{error}=await sb.from('payroll').upsert(row,{onConflict:'teacher_id,month'});error?toast(error.message):(await load(),payr(m),toast('Đã lưu'))})}
+function rep(){const mo=ym(),ls=C.leads.filter(l=>(l.created_at||'').startsWith(mo)),rev=C.payments.filter(p=>p.created_at.startsWith(mo)),by=SRC.map(s=>[s,ls.filter(l=>l.source==s).length]),mx=Math.max(1,...by.map(b=>b[1])),ch=ls.filter(l=>l.status=='Chốt hợp đồng').length;
+$('#mn').innerHTML=`<h2>Báo cáo tổng hợp · ${mo.split('-').reverse().join('/')}</h2><div class="row"><div class="k">Thực thu<b>${fm(rev.reduce((a,p)=>a+p.amount,0))}</b>${rev.length} giao dịch</div><div class="k">Khách mới<b>${ls.length}</b></div><div class="k">Tỷ lệ chốt<b>${ls.length?Math.round(ch*100/ls.length):0}%</b>${ch} khách chốt</div><div class="k">Lớp đang học<b>${C.classes.filter(c=>c.status=='Đang hoạt động').length}</b></div></div><br><div class="card"><h3>Hiệu quả nguồn khách</h3>${by.map(b=>`<p>${b[0]} (${b[1]})<div class="bar" style="width:${b[1]*100/mx}%"></div></p>`).join('')}</div>`}
+function users(){$('#mn').innerHTML=`<div class="top"><h2>Người dùng & quyền</h2><button class="b1" id="ad">+ Thêm nhân sự</button></div><div class="card"><table><tr><th>Tên</th><th>Email</th><th>Vai trò</th></tr>${C.profiles.map(p=>`<tr><td>${esc(p.full_name)}</td><td>${esc(p.email)}</td><td><select data-u="${p.id}">${Object.entries(LBL).map(([k,v])=>`<option value="${k}" ${k==p.role?'selected':''}>${v}</option>`).join('')}</select></td></tr>`).join('')}</table></div>`;
+document.querySelectorAll('[data-u]').forEach(s=>s.onchange=async()=>{const{error}=await sb.from('profiles').update({role:s.value}).eq('id',s.dataset.u);error?toast(error.message):toast('Đã đổi vai trò')});
+const fs=[{k:'full_name',l:'Họ tên'},{k:'email',l:'Email',t:'email'},{k:'pw',l:'Mật khẩu (≥6 ký tự)',t:'password'},{k:'role',l:'Vai trò',t:'sel',o:Object.keys(LBL)}];
+$('#ad').onclick=()=>modal('Thêm nhân sự',fs.map(f=>fld(f,'')).join(''),async m=>{const v=rd(fs,m),c2=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false}});
+const{data,error}=await c2.auth.signUp({email:v.email,password:v.pw,options:{data:{full_name:v.full_name}}});if(error)throw error;
+await new Promise(r=>setTimeout(r,800));await sb.from('profiles').update({role:v.role,full_name:v.full_name}).eq('id',data.user.id)})}
+function sett(){const fs=[['center_name','Tên trung tâm'],['hotline','Hotline'],['email','Email nhận phản hồi'],['address','Địa chỉ'],['bank_code','Mã ngân hàng (VD: MB, VCB, TCB)'],['account_no','Số tài khoản'],['account_name','Chủ tài khoản'],['due_day','Hạn đóng học phí hằng tháng (ngày)']];
+$('#mn').innerHTML=`<h2>Cài đặt</h2><div class="card">${fs.map(f=>fld({k:f[0],l:f[1],t:f[0]=='due_day'?'number':'text'},cfg[f[0]])).join('')}<button class="b1" id="sv">Lưu cấu hình</button></div>`;
+$('#sv').onclick=async()=>{const v=rd(fs.map(f=>({k:f[0],t:f[0]=='due_day'?'number':''})),$('#mn'));const{error}=await sb.from('settings').update(v).eq('id',1);error?toast(error.message):(await load(),toast('Đã lưu'))}}
+boot();
+</script></body></html>
